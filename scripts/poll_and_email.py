@@ -1,0 +1,242 @@
+import json
+import os
+import re
+import smtplib
+from dataclasses import dataclass
+from email.message import EmailMessage
+from pathlib import Path
+from typing import Dict, List, Set, Tuple
+
+import requests
+
+BOARDS_FILE = Path("boards.txt")
+STATE_FILE = Path("state_seen.json")
+
+ASHBY_URL = "https://api.ashbyhq.com/posting-api/job-board/{slug}"
+
+# You said title variants are fine; keep it tight for now.
+TITLE_RE = re.compile(r"\bdata\s*scientist\b", re.IGNORECASE)
+
+@dataclass(frozen=True)
+class JobHit:
+    slug: str
+    title: str
+    location: str
+    url: str
+    updated_at: str
+
+def load_boards() -> List[str]:
+    if not BOARDS_FILE.exists():
+        return []
+    boards = []
+    for line in BOARDS_FILE.read_text(encoding="utf-8").splitlines():
+        s = line.strip()
+        if s:
+            boards.append(s)
+    return boards
+
+def load_state() -> Set[str]:
+    if not STATE_FILE.exists():
+        return set()
+    try:
+        obj = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+        seen = obj.get("seen", [])
+        return set(seen) if isinstance(seen, list) else set()
+    except Exception:
+        return set()
+
+def save_state(seen: Set[str]) -> None:
+    STATE_FILE.write_text(json.dumps({"seen": sorted(seen)}, indent=2), encoding="utf-8")
+
+def fetch_jobs_for_board(slug: str) -> List[dict]:
+    url = ASHBY_URL.format(slug=slug)
+    r = requests.get(url, timeout=30)
+    if r.status_code == 404:
+        return []
+    r.raise_for_status()
+    data = r.json()
+    # Ashby returns a JSON with a "jobs" array
+    return data.get("jobs", []) or []
+
+def parse_location(job: dict) -> str:
+    # Location formatting varies. Try a few common fields.
+    loc = job.get("location")
+    if isinstance(loc, str) and loc.strip():
+        return loc.strip()
+    # Some boards have multiple locations or location name fields
+    locs = job.get("locations")
+    if isinstance(locs, list) and locs:
+        # join first few
+        names = []
+        for item in locs[:3]:
+            if isinstance(item, dict):
+                name = item.get("name") or item.get("location")
+                if isinstance(name, str) and name.strip():
+                    names.append(name.strip())
+            elif isinstance(item, str) and item.strip():
+                names.append(item.strip())
+        if names:
+            return " / ".join(names)
+    return "Unspecified"
+
+US_COUNTRY_TOKENS = {"usa", "us", "united states", "united states of america"}
+
+US_STATE_ABBR = {
+  "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA","KS","KY","LA","ME","MD",
+  "MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ","NM","NY","NC","ND","OH","OK","OR","PA","RI","SC",
+  "SD","TN","TX","UT","VT","VA","WA","WV","WI","WY","DC"
+}
+
+def norm_country(x: str) -> str:
+    return (x or "").strip().lower()
+
+def country_from_job(job: dict) -> str:
+    # Primary addressCountry if present
+    addr = job.get("address") or {}
+    postal = addr.get("postalAddress") or {}
+    c = postal.get("addressCountry")
+    if isinstance(c, str) and c.strip():
+        return c.strip()
+    return ""
+
+def countries_from_secondary(job: dict) -> list[str]:
+    out = []
+    sec = job.get("secondaryLocations") or []
+    if not isinstance(sec, list):
+        return out
+    for item in sec:
+        if not isinstance(item, dict):
+            continue
+        a = item.get("address") or {}
+        c = a.get("addressCountry")
+        if isinstance(c, str) and c.strip():
+            out.append(c.strip())
+    return out
+
+def looks_like_us_location_string(loc: str) -> bool:
+    loc = (loc or "").strip()
+    # e.g., "San Francisco, CA" or "Remote - US"
+    if re.search(r"\bremote\b", loc, re.IGNORECASE) and re.search(r"\b(us|usa|united states)\b", loc, re.IGNORECASE):
+        return True
+    m = re.search(r",\s*([A-Z]{2})(\b|$)", loc)
+    return bool(m and m.group(1) in US_STATE_ABBR)
+
+def is_us_job(job: dict) -> bool:
+    c = norm_country(country_from_job(job))
+    if c and c in US_COUNTRY_TOKENS:
+        return True
+
+    for sc in countries_from_secondary(job):
+        if norm_country(sc) in US_COUNTRY_TOKENS:
+            return True
+
+    # Fallback if country missing in Ashby data
+    loc = job.get("location") or ""
+    return looks_like_us_location_string(loc)
+
+def extract_job_key(job: dict) -> str:
+    # Use a stable unique key. Prefer an explicit id if present; fall back to URL.
+    # Keys vary by org; cover common patterns.
+    jid = job.get("id") or job.get("_id") or job.get("jobId") or job.get("requisitionId")
+    if jid:
+        return f"id:{jid}"
+    url = job.get("jobUrl") or job.get("url") or job.get("applyUrl")
+    if url:
+        return f"url:{url}"
+    # last resort: title+createdAt (less stable)
+    return f"fallback:{job.get('title','')}|{job.get('createdAt','')}"
+
+def extract_job_url(job: dict) -> str:
+    return job.get("jobUrl") or job.get("url") or job.get("applyUrl") or ""
+
+def extract_updated_at(job: dict) -> str:
+    return job.get("updatedAt") or job.get("publishedAt") or job.get("createdAt") or ""
+
+def find_new_hits(boards: List[str], seen: Set[str]) -> Tuple[List[JobHit], Set[str]]:
+    hits: List[JobHit] = []
+    new_seen = set(seen)
+
+    for slug in boards:
+        try:
+            jobs = fetch_jobs_for_board(slug)
+        except Exception as e:
+            # Don't fail the whole run; just skip this board.
+            print(f"[warn] fetch failed for {slug}: {e}")
+            continue
+
+        for job in jobs:
+            title = (job.get("title") or "").strip()
+            if not title or not TITLE_RE.search(title):
+                continue
+
+            if not is_us_job(job):
+                continue
+
+            key = extract_job_key(job)
+            if key in new_seen:
+                continue
+
+            url = extract_job_url(job)
+            loc = parse_location(job)
+            updated_at = extract_updated_at(job)
+
+            hits.append(JobHit(slug=slug, title=title, location=loc, url=url, updated_at=updated_at))
+            new_seen.add(key)
+
+    # Stable sort: newest-ish first if updated_at is sortable, else title
+    hits.sort(key=lambda x: (x.updated_at or "", x.slug, x.title), reverse=True)
+    return hits, new_seen
+
+def send_email(subject: str, body: str) -> None:
+    gmail_user = os.environ["GMAIL_USER"]
+    gmail_pass = os.environ["GMAIL_APP_PASSWORD"]
+    alert_to = os.environ.get("ALERT_TO", gmail_user)
+
+    msg = EmailMessage()
+    msg["From"] = gmail_user
+    msg["To"] = alert_to
+    msg["Subject"] = subject
+    msg.set_content(body)
+
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
+        smtp.login(gmail_user, gmail_pass)
+        smtp.send_message(msg)
+
+def format_digest(hits: List[JobHit]) -> str:
+    lines = []
+    lines.append(f"New Ashby Data Scientist postings: {len(hits)}")
+    lines.append("")
+    for h in hits:
+        lines.append(f"- {h.title}")
+        lines.append(f"  Company board: {h.slug}")
+        lines.append(f"  Location: {h.location}")
+        if h.updated_at:
+            lines.append(f"  Updated: {h.updated_at}")
+        if h.url:
+            lines.append(f"  Link: {h.url}")
+        lines.append("")
+    return "\n".join(lines).strip() + "\n"
+
+def main():
+    boards = load_boards()
+    if not boards:
+        print("No boards found. boards.txt is empty.")
+        return
+
+    seen = load_state()
+    hits, new_seen = find_new_hits(boards, seen)
+
+    if hits:
+        subject = f"Ashby DS jobs: {len(hits)} new"
+        body = format_digest(hits)
+        send_email(subject, body)
+        print(f"Sent email for {len(hits)} new jobs.")
+    else:
+        print("No new matching jobs.")
+
+    # Always save state (even if no hits) in case you want to track other keys later
+    save_state(new_seen)
+    print(f"State size: {len(new_seen)}")
+
+if __name__ == "__main__":
+    main()

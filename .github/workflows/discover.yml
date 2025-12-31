@@ -1,0 +1,42 @@
+name: Discover Ashby Boards
+
+on:
+  schedule:
+    - cron: "17 6 * * *"  # daily at 06:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run discovery
+        run: |
+          python scripts/discover_boards.py
+
+      - name: Commit updated boards.txt
+        run: |
+          if git diff --quiet; then
+            echo "No changes."
+            exit 0
+          fi
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add boards.txt
+          git commit -m "Update Ashby boards list"
+          git push
