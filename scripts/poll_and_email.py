@@ -198,7 +198,9 @@ def find_new_hits(boards: List[str], seen: Set[str]) -> Tuple[List[JobHit], Set[
             if not TITLE_RE.search(title):
                 continue
 
-            ds_titles_new += 1
+            # ---- US-only alert filter ----
+            if not is_us_job(job):
+                continue
 
             url = extract_job_url(job)
             loc = parse_location(job)
