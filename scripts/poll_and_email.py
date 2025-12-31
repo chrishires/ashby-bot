@@ -201,6 +201,9 @@ def find_new_hits(boards: List[str], seen: Set[str]) -> Tuple[List[JobHit], Set[
 
                 if is_us_job(job):
                     us_title_matches_total += 1
+                    us = is_us_job(job)
+                    if not us:
+                        print(f"[non-us?] {slug} | {title} | location={job.get('location')!r}")
 
                     url = extract_job_url(job)
                     loc = parse_location(job)
