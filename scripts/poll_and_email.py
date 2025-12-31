@@ -135,15 +135,14 @@ def is_us_job(job: dict) -> bool:
     return looks_like_us_location_string(loc)
 
 def extract_job_key(job: dict) -> str:
-    # Use a stable unique key. Prefer an explicit id if present; fall back to URL.
-    # Keys vary by org; cover common patterns.
-    jid = job.get("id") or job.get("_id") or job.get("jobId") or job.get("requisitionId")
-    if jid:
-        return f"id:{jid}"
     url = job.get("jobUrl") or job.get("url") or job.get("applyUrl")
     if url:
         return f"url:{url}"
-    # last resort: title+createdAt (less stable)
+
+    jid = job.get("id") or job.get("_id") or job.get("jobId") or job.get("requisitionId")
+    if jid:
+        return f"id:{jid}"
+
     return f"fallback:{job.get('title','')}|{job.get('createdAt','')}"
 
 def extract_job_url(job: dict) -> str:
@@ -157,24 +156,18 @@ def find_new_hits(boards: List[str], seen: Set[str]) -> Tuple[List[JobHit], Set[
     new_seen = set(seen)
 
     boards_total = len(boards)
-    boards_404 = 0
     boards_ok = 0
     boards_err = 0
+
     jobs_total = 0
-    title_matches = 0
-    us_title_matches = 0
+    title_matches_total = 0
+    us_title_matches_total = 0
+    new_hits = 0
 
     for slug in boards:
         try:
             jobs = fetch_jobs_for_board(slug)
             boards_ok += 1
-        except requests.HTTPError as e:
-            if getattr(e.response, "status_code", None) == 404:
-                boards_404 += 1
-                continue
-            boards_err += 1
-            print(f"[warn] {slug} http error: {e}")
-            continue
         except Exception as e:
             boards_err += 1
             print(f"[warn] fetch failed for {slug}: {e}")
@@ -183,29 +176,51 @@ def find_new_hits(boards: List[str], seen: Set[str]) -> Tuple[List[JobHit], Set[
         jobs_total += len(jobs)
 
         for job in jobs:
+            # ---- dedupe key (URL-first) ----
+            key_url = extract_job_key(job)
+
+            # Optional: id alias to avoid one-time duplicate alerts
+            jid = job.get("id") or job.get("_id") or job.get("jobId") or job.get("requisitionId")
+            key_id = f"id:{jid}" if jid else None
+
+            if key_url in new_seen or (key_id and key_id in new_seen):
+                continue
+
+            # mark as seen immediately
+            new_seen.add(key_url)
+            if key_id:
+                new_seen.add(key_id)
+
+            # ---- filtering for metrics / alerts ----
             title = (job.get("title") or "").strip()
-            if not title or not TITLE_RE.search(title):
+            if not title:
                 continue
 
-            if not is_us_job(job):
-                continue
+            if TITLE_RE.search(title):
+                title_matches_total += 1
 
-            key = extract_job_key(job)
-            if key in new_seen:
-                continue
+                if is_us_job(job):
+                    us_title_matches_total += 1
 
-            url = extract_job_url(job)
-            loc = parse_location(job)
-            updated_at = extract_updated_at(job)
+                    url = extract_job_url(job)
+                    loc = parse_location(job)
+                    updated_at = extract_updated_at(job)
 
-            hits.append(JobHit(slug=slug, title=title, location=loc, url=url, updated_at=updated_at))
-            new_seen.add(key)
-    
-    print(f"Boards total: {boards_total} | ok: {boards_ok} | 404: {boards_404} | err: {boards_err}")
+                    hits.append(JobHit(
+                        slug=slug,
+                        title=title,
+                        location=loc,
+                        url=url,
+                        updated_at=updated_at
+                    ))
+                    new_hits += 1
+
+    print(f"Boards total: {boards_total} | ok: {boards_ok} | err: {boards_err}")
     print(f"Jobs total fetched: {jobs_total}")
-    print(f"Title matches: {title_matches} | US+Title matches: {us_title_matches}")
+    print(f"DS title matches (total): {title_matches_total}")
+    print(f"US + DS matches (total): {us_title_matches_total}")
+    print(f"New hits this run: {new_hits}")
 
-    # Stable sort: newest-ish first if updated_at is sortable, else title
     hits.sort(key=lambda x: (x.updated_at or "", x.slug, x.title), reverse=True)
     return hits, new_seen
 
@@ -240,11 +255,7 @@ def format_digest(hits: List[JobHit]) -> str:
     return "\n".join(lines).strip() + "\n"
 
 def main():
-    print("CWD:", os.getcwd())
-    print("STATE_FILE exists?", STATE_FILE.exists())
-    if STATE_FILE.exists():
-        print("STATE_FILE bytes:", STATE_FILE.stat().st_size)
-
+    
     boards = load_boards()
     print("Boards loaded:", len(boards))
 
