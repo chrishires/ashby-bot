@@ -156,13 +156,31 @@ def find_new_hits(boards: List[str], seen: Set[str]) -> Tuple[List[JobHit], Set[
     hits: List[JobHit] = []
     new_seen = set(seen)
 
+    boards_total = len(boards)
+    boards_404 = 0
+    boards_ok = 0
+    boards_err = 0
+    jobs_total = 0
+    title_matches = 0
+    us_title_matches = 0
+
     for slug in boards:
         try:
             jobs = fetch_jobs_for_board(slug)
+            boards_ok += 1
+        except requests.HTTPError as e:
+            if getattr(e.response, "status_code", None) == 404:
+                boards_404 += 1
+                continue
+            boards_err += 1
+            print(f"[warn] {slug} http error: {e}")
+            continue
         except Exception as e:
-            # Don't fail the whole run; just skip this board.
+            boards_err += 1
             print(f"[warn] fetch failed for {slug}: {e}")
             continue
+
+        jobs_total += len(jobs)
 
         for job in jobs:
             title = (job.get("title") or "").strip()
@@ -182,6 +200,10 @@ def find_new_hits(boards: List[str], seen: Set[str]) -> Tuple[List[JobHit], Set[
 
             hits.append(JobHit(slug=slug, title=title, location=loc, url=url, updated_at=updated_at))
             new_seen.add(key)
+    
+    print(f"Boards total: {boards_total} | ok: {boards_ok} | 404: {boards_404} | err: {boards_err}")
+    print(f"Jobs total fetched: {jobs_total}")
+    print(f"Title matches: {title_matches} | US+Title matches: {us_title_matches}")
 
     # Stable sort: newest-ish first if updated_at is sortable, else title
     hits.sort(key=lambda x: (x.updated_at or "", x.slug, x.title), reverse=True)
