@@ -151,17 +151,17 @@ def extract_job_url(job: dict) -> str:
 def extract_updated_at(job: dict) -> str:
     return job.get("updatedAt") or job.get("publishedAt") or job.get("createdAt") or ""
 
+
 def find_new_hits(boards: List[str], seen: Set[str]) -> Tuple[List[JobHit], Set[str]]:
     hits: List[JobHit] = []
-    new_seen = set(seen)
+    new_seen: Set[str] = set(seen)
 
     boards_total = len(boards)
     boards_ok = 0
     boards_err = 0
 
     jobs_total = 0
-    title_matches_total = 0
-    us_title_matches_total = 0
+    ds_titles_new = 0
     new_hits = 0
 
     for slug in boards:
@@ -176,52 +176,46 @@ def find_new_hits(boards: List[str], seen: Set[str]) -> Tuple[List[JobHit], Set[
         jobs_total += len(jobs)
 
         for job in jobs:
-            # ---- dedupe key (URL-first) ----
-            key_url = extract_job_key(job)
-
-            # Optional: id alias to avoid one-time duplicate alerts
+            # ---- compute keys ----
+            key_url = extract_job_key(job)  # URL-first ("url:...") if available
             jid = job.get("id") or job.get("_id") or job.get("jobId") or job.get("requisitionId")
             key_id = f"id:{jid}" if jid else None
 
+            # ---- global dedupe (skip if already seen) ----
             if key_url in new_seen or (key_id and key_id in new_seen):
                 continue
 
-            # mark as seen immediately
+            # mark as seen immediately (even if it doesn't match DS)
             new_seen.add(key_url)
             if key_id:
                 new_seen.add(key_id)
 
-            # ---- filtering for metrics / alerts ----
+            # ---- DS title filter (no country logic) ----
             title = (job.get("title") or "").strip()
             if not title:
                 continue
 
-            if TITLE_RE.search(title):
-                title_matches_total += 1
+            if not TITLE_RE.search(title):
+                continue
 
-                if is_us_job(job):
-                    us_title_matches_total += 1
-                    us = is_us_job(job)
-                    if not us:
-                        print(f"[non-us?] {slug} | {title} | location={job.get('location')!r}")
+            ds_titles_new += 1
 
-                    url = extract_job_url(job)
-                    loc = parse_location(job)
-                    updated_at = extract_updated_at(job)
+            url = extract_job_url(job)
+            loc = parse_location(job)
+            updated_at = extract_updated_at(job)
 
-                    hits.append(JobHit(
-                        slug=slug,
-                        title=title,
-                        location=loc,
-                        url=url,
-                        updated_at=updated_at
-                    ))
-                    new_hits += 1
+            hits.append(JobHit(
+                slug=slug,
+                title=title,
+                location=loc,
+                url=url,
+                updated_at=updated_at
+            ))
+            new_hits += 1
 
     print(f"Boards total: {boards_total} | ok: {boards_ok} | err: {boards_err}")
     print(f"Jobs total fetched: {jobs_total}")
-    print(f"DS title matches (total): {title_matches_total}")
-    print(f"US + DS matches (total): {us_title_matches_total}")
+    print(f"New DS-title matches this run: {ds_titles_new}")
     print(f"New hits this run: {new_hits}")
 
     hits.sort(key=lambda x: (x.updated_at or "", x.slug, x.title), reverse=True)

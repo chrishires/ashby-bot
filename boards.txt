@@ -112,3 +112,6 @@ watneyrobotics
 wellth
 woflow
 zoe
+notion
+ramp
+suno
