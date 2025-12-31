@@ -240,6 +240,17 @@ def format_digest(hits: List[JobHit]) -> str:
     return "\n".join(lines).strip() + "\n"
 
 def main():
+    print("CWD:", os.getcwd())
+    print("STATE_FILE exists?", STATE_FILE.exists())
+    if STATE_FILE.exists():
+        print("STATE_FILE bytes:", STATE_FILE.stat().st_size)
+
+    boards = load_boards()
+    print("Boards loaded:", len(boards))
+
+    seen = load_state()
+    print("Loaded state size:", len(seen))
+
     boards = load_boards()
     if not boards:
         print("No boards found. boards.txt is empty.")
@@ -247,6 +258,7 @@ def main():
 
     seen = load_state()
     hits, new_seen = find_new_hits(boards, seen)
+    print("New state size:", len(new_seen))
 
     if hits:
         subject = f"Ashby DS jobs: {len(hits)} new"
@@ -258,7 +270,7 @@ def main():
 
     # Always save state (even if no hits) in case you want to track other keys later
     save_state(new_seen)
-    print(f"State size: {len(new_seen)}")
+    print("Saved state size:", len(new_seen))
 
 if __name__ == "__main__":
     main()
