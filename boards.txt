@@ -121,3 +121,4 @@ sequence
 lovable
 imprint
 servalsquadformers
+squadformers
