@@ -120,5 +120,5 @@ sweatpals
 sequence
 lovable
 imprint
-servalsquadformers
+serval
 squadformers
