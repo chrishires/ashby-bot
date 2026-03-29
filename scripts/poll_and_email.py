@@ -14,14 +14,15 @@ STATE_FILE = Path("state_seen.json")
 
 ASHBY_URL = "https://api.ashbyhq.com/posting-api/job-board/{slug}"
 
+# Re-write this to tailor it to your own job search needs
 TITLE_RE = re.compile(
     r"\b("
-    r"data\s+scien(tist|ce)"                           # Data Scientist, Data Science (Manager/Lead/Director)
-    r"|decision\s+scientist"                            # Decision Scientist (common DS synonym, e.g. at Uber/Meta)
-    r"|quantitative\s+(analyst|researcher|scientist)"  # Quant roles, common in fintech
-    r"|forecasting\s+(analyst|scientist|engineer)"     # Forecasting-specific titles
-    r"|causal\s+(inference\s+)?scientist"              # Causal Inference Scientist
-    r"|applied\s+(data\s+)?scientist"                  # Applied Data Scientist (not pure research)
+    r"data\s+scien(tist|ce)"                           
+    r"|decision\s+scientist"                           
+    r"|quantitative\s+(analyst|researcher|scientist)"  
+    r"|forecasting\s+(analyst|scientist|engineer)"     
+    r"|causal\s+(inference\s+)?scientist"              
+    r"|applied\s+(data\s+)?scientist"                  
     r")",
     re.IGNORECASE
 )
