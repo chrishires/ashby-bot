@@ -10,6 +10,8 @@ Two GitHub Actions workflows run on a schedule:
 
 **`poll.yml`** — runs every 3 hours. Fetches all open jobs from every board in `boards.txt`, filters by title and US location, and emails a digest of any jobs not seen in previous runs. Seen job URLs are persisted in `state_seen.json` to avoid duplicate alerts.
 
+**Note:** The first time you run the script, you'll get an email with a very large number of listings, because `state_seen.json` will be empty. This may or may not be useful to you. If not, just ignore the email and you'll only receive new listings going forward.
+
 ## Configuration
 
 ### Title filtering
