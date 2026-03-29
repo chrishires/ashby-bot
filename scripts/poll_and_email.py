@@ -14,8 +14,17 @@ STATE_FILE = Path("state_seen.json")
 
 ASHBY_URL = "https://api.ashbyhq.com/posting-api/job-board/{slug}"
 
-# You said title variants are fine; keep it tight for now.
-TITLE_RE = re.compile(r"\bdata\s*scientist\b", re.IGNORECASE)
+TITLE_RE = re.compile(
+    r"\b("
+    r"data\s+scien(tist|ce)"                           # Data Scientist, Data Science (Manager/Lead/Director)
+    r"|decision\s+scientist"                            # Decision Scientist (common DS synonym, e.g. at Uber/Meta)
+    r"|quantitative\s+(analyst|researcher|scientist)"  # Quant roles, common in fintech
+    r"|forecasting\s+(analyst|scientist|engineer)"     # Forecasting-specific titles
+    r"|causal\s+(inference\s+)?scientist"              # Causal Inference Scientist
+    r"|applied\s+(data\s+)?scientist"                  # Applied Data Scientist (not pure research)
+    r")",
+    re.IGNORECASE
+)
 
 @dataclass(frozen=True)
 class JobHit:
@@ -55,18 +64,14 @@ def fetch_jobs_for_board(slug: str) -> List[dict]:
         return []
     r.raise_for_status()
     data = r.json()
-    # Ashby returns a JSON with a "jobs" array
     return data.get("jobs", []) or []
 
 def parse_location(job: dict) -> str:
-    # Location formatting varies. Try a few common fields.
     loc = job.get("location")
     if isinstance(loc, str) and loc.strip():
         return loc.strip()
-    # Some boards have multiple locations or location name fields
     locs = job.get("locations")
     if isinstance(locs, list) and locs:
-        # join first few
         names = []
         for item in locs[:3]:
             if isinstance(item, dict):
@@ -79,7 +84,10 @@ def parse_location(job: dict) -> str:
             return " / ".join(names)
     return "Unspecified"
 
-US_COUNTRY_TOKENS = {"usa", "us", "united states", "united states of america"}
+US_COUNTRY_TOKENS = {
+    "usa", "us", "u.s.", "u.s.a.",
+    "united states", "united states of america",
+}
 
 US_STATE_ABBR = {
   "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA","KS","KY","LA","ME","MD",
@@ -91,7 +99,6 @@ def norm_country(x: str) -> str:
     return (x or "").strip().lower()
 
 def country_from_job(job: dict) -> str:
-    # Primary addressCountry if present
     addr = job.get("address") or {}
     postal = addr.get("postalAddress") or {}
     c = postal.get("addressCountry")
@@ -115,7 +122,6 @@ def countries_from_secondary(job: dict) -> list[str]:
 
 def looks_like_us_location_string(loc: str) -> bool:
     loc = (loc or "").strip()
-    # e.g., "San Francisco, CA" or "Remote - US"
     if re.search(r"\bremote\b", loc, re.IGNORECASE) and re.search(r"\b(us|usa|united states)\b", loc, re.IGNORECASE):
         return True
     m = re.search(r",\s*([A-Z]{2})(\b|$)", loc)
@@ -130,7 +136,14 @@ def is_us_job(job: dict) -> bool:
         if norm_country(sc) in US_COUNTRY_TOKENS:
             return True
 
-    # Fallback if country missing in Ashby data
+    # If no country data at all, treat isRemote=True as likely US.
+    # Ashby is predominantly US-startup-focused; international boards
+    # tend to populate addressCountry reliably (confirmed in Ramp data).
+    # Accepts some non-US remote roles from sparse boards — false negative
+    # cost exceeds false positive cost here.
+    if not country_from_job(job) and job.get("isRemote") is True:
+        return True
+
     loc = job.get("location") or ""
     return looks_like_us_location_string(loc)
 
@@ -161,7 +174,8 @@ def find_new_hits(boards: List[str], seen: Set[str]) -> Tuple[List[JobHit], Set[
     boards_err = 0
 
     jobs_total = 0
-    ds_titles_new = 0
+    ds_titles_unseen = 0   # passed title filter (new, not yet seen)
+    ds_titles_non_us = 0   # passed title filter but dropped by geo filter
     new_hits = 0
 
     for slug in boards:
@@ -177,11 +191,11 @@ def find_new_hits(boards: List[str], seen: Set[str]) -> Tuple[List[JobHit], Set[
 
         for job in jobs:
             # ---- compute keys ----
-            key_url = extract_job_key(job)  # URL-first ("url:...") if available
+            key_url = extract_job_key(job)
             jid = job.get("id") or job.get("_id") or job.get("jobId") or job.get("requisitionId")
             key_id = f"id:{jid}" if jid else None
 
-            # ---- global dedupe (skip if already seen) ----
+            # ---- global dedupe ----
             if key_url in new_seen or (key_id and key_id in new_seen):
                 continue
 
@@ -190,7 +204,7 @@ def find_new_hits(boards: List[str], seen: Set[str]) -> Tuple[List[JobHit], Set[
             if key_id:
                 new_seen.add(key_id)
 
-            # ---- DS title filter (no country logic) ----
+            # ---- DS title filter ----
             title = (job.get("title") or "").strip()
             if not title:
                 continue
@@ -198,8 +212,11 @@ def find_new_hits(boards: List[str], seen: Set[str]) -> Tuple[List[JobHit], Set[
             if not TITLE_RE.search(title):
                 continue
 
+            ds_titles_unseen += 1  # passed title filter; now apply geo filter
+
             # ---- US-only alert filter ----
             if not is_us_job(job):
+                ds_titles_non_us += 1
                 continue
 
             url = extract_job_url(job)
@@ -217,8 +234,9 @@ def find_new_hits(boards: List[str], seen: Set[str]) -> Tuple[List[JobHit], Set[
 
     print(f"Boards total: {boards_total} | ok: {boards_ok} | err: {boards_err}")
     print(f"Jobs total fetched: {jobs_total}")
-    print(f"New DS-title matches this run: {ds_titles_new}")
-    print(f"New hits this run: {new_hits}")
+    print(f"New DS-title matches (unseen): {ds_titles_unseen}")
+    print(f"  - Dropped by geo filter: {ds_titles_non_us}")
+    print(f"  - Emailed as hits: {new_hits}")
 
     hits.sort(key=lambda x: (x.updated_at or "", x.slug, x.title), reverse=True)
     return hits, new_seen
@@ -254,19 +272,16 @@ def format_digest(hits: List[JobHit]) -> str:
     return "\n".join(lines).strip() + "\n"
 
 def main():
-    
     boards = load_boards()
     print("Boards loaded:", len(boards))
 
     seen = load_state()
     print("Loaded state size:", len(seen))
 
-    boards = load_boards()
     if not boards:
         print("No boards found. boards.txt is empty.")
         return
 
-    seen = load_state()
     hits, new_seen = find_new_hits(boards, seen)
     print("New state size:", len(new_seen))
 
@@ -278,7 +293,6 @@ def main():
     else:
         print("No new matching jobs.")
 
-    # Always save state (even if no hits) in case you want to track other keys later
     save_state(new_seen)
     print("Saved state size:", len(new_seen))
 
