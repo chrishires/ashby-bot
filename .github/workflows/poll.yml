@@ -24,9 +24,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: state_seen.json
-          key: state-seen-${{ runner.os }}
+          key: state-seen-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            state-seen-
+            state-seen-${{ runner.os }}-
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -41,10 +41,3 @@ jobs:
       - name: Poll + email
         run: |
           python scripts/poll_and_email.py
-
-      - name: Save state cache
-        uses: actions/cache/save@v4
-        if: always()
-        with:
-          path: state_seen.json
-          key: state-seen-${{ runner.os }}-${{ github.run_id }}
