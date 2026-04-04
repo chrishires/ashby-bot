@@ -1,5 +1,6 @@
 import json
 import re
+import time
 from pathlib import Path
 from typing import Iterable, Set
 import requests
@@ -10,6 +11,10 @@ SLUG_RE = re.compile(r"^https?://jobs\.ashbyhq\.com/([^/?#]+)/?$", re.IGNORECASE
 ASHBY_API = "https://api.ashbyhq.com/posting-api/job-board/{slug}"
 
 CC_COLLINFO = "https://index.commoncrawl.org/collinfo.json"
+
+CC_TIMEOUT = 120        # seconds per request
+CC_MAX_RETRIES = 3
+CC_RETRY_DELAY = 30     # seconds between retries
 
 def get_latest_cc_index_api() -> str:
     resp = requests.get(CC_COLLINFO, timeout=30)
@@ -44,18 +49,29 @@ def iter_cc_matches(cdx_api: str) -> Iterable[str]:
         f"&fl=url"
         f"&collapse=urlkey"
     )
-    with requests.get(query_url, stream=True, timeout=60) as r:
-        r.raise_for_status()
-        for line in r.iter_lines(decode_unicode=True):
-            if not line:
-                continue
-            try:
-                obj = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            url = obj.get("url")
-            if url:
-                yield url
+    for attempt in range(CC_MAX_RETRIES):
+        try:
+            with requests.get(query_url, stream=True, timeout=CC_TIMEOUT) as r:
+                r.raise_for_status()
+                for line in r.iter_lines(decode_unicode=True):
+                    if not line:
+                        continue
+                    try:
+                        obj = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    url = obj.get("url")
+                    if url:
+                        yield url
+            return  # success
+        except Exception as e:
+            print(f"[warn] CC fetch attempt {attempt + 1}/{CC_MAX_RETRIES} failed: {e}")
+            if attempt < CC_MAX_RETRIES - 1:
+                print(f"[warn] Retrying in {CC_RETRY_DELAY}s...")
+                time.sleep(CC_RETRY_DELAY)
+            else:
+                print("[warn] All CC fetch attempts failed. Skipping discovery this run.")
+                return
 
 def extract_slugs(urls: Iterable[str]) -> Set[str]:
     slugs = set()
@@ -75,7 +91,6 @@ def is_valid_ashby_board(slug: str) -> bool:
         if r.status_code != 200:
             return False
         data = r.json()
-        # Ashby docs show: {"apiVersion":"1","jobs":[...]}  [oai_citation:2‡Ashby](https://developers.ashbyhq.com/docs/public-job-posting-api)
         return isinstance(data, dict) and isinstance(data.get("jobs"), list) and "apiVersion" in data
     except Exception:
         return False
@@ -90,7 +105,6 @@ def main():
     candidates = sorted(slugs - existing)
     valid_new = []
 
-    # Validate newly discovered slugs against Ashby API
     for slug in candidates:
         if is_valid_ashby_board(slug):
             valid_new.append(slug)
