@@ -6,7 +6,7 @@ A job board scraper that sends email alerts for newly posted roles across hundre
 
 Two GitHub Actions workflows run on a schedule:
 
-**`discover.yml`** — runs daily. Queries the [Common Crawl](https://commoncrawl.org/) index for new `jobs.ashbyhq.com` URLs, validates each discovered slug against the Ashby API, and appends new boards to `boards.txt`.
+**`discover.yml`** — runs weekly. Queries the [Common Crawl](https://commoncrawl.org/) index for new `jobs.ashbyhq.com` URLs, validates each discovered slug against the Ashby API, and appends new boards to `boards.txt`.
 
 **`poll.yml`** — runs every 3 hours. Fetches all open jobs from every board in `boards.txt`, filters by title and US location, and emails a digest of any jobs not seen in previous runs. Seen job URLs are persisted in `state_seen.json` to avoid duplicate alerts.
 
