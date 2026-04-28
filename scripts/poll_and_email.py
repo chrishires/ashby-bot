@@ -22,7 +22,9 @@ TITLE_RE = re.compile(
     r"|quantitative\s+(analyst|researcher|scientist)"  
     r"|forecasting\s+(analyst|scientist|engineer)"     
     r"|causal\s+(inference\s+)?scientist"              
-    r"|applied\s+(data\s+)?scientist"                  
+    r"|applied\s+(data\s+)?scientist"
+    r"|(?:vp|vice\s+president|head|director|lead)\s+of\s+analytics"
+    r"|analytics\s+(?:lead|manager|director)"                  
     r")",
     re.IGNORECASE
 )
@@ -128,6 +130,8 @@ def looks_like_us_location_string(loc: str) -> bool:
     m = re.search(r",\s*([A-Z]{2})(\b|$)", loc)
     return bool(m and m.group(1) in US_STATE_ABBR)
 
+# You may wish to modify or remove is_us_job and related functions if you want a different geo filter or no geo filter at all.
+
 def is_us_job(job: dict) -> bool:
     c = norm_country(country_from_job(job))
     if c and c in US_COUNTRY_TOKENS:
@@ -138,10 +142,7 @@ def is_us_job(job: dict) -> bool:
             return True
 
     # If no country data at all, treat isRemote=True as likely US.
-    # Ashby is predominantly US-startup-focused; international boards
-    # tend to populate addressCountry reliably (confirmed in Ramp data).
-    # Accepts some non-US remote roles from sparse boards — false negative
-    # cost exceeds false positive cost here.
+
     if not country_from_job(job) and job.get("isRemote") is True:
         return True
 
