@@ -1410,4 +1410,4 @@ saris-ai
 satispay
 scoreplay
 sema4.ai
-perplexity
+perplexityautonomybio
