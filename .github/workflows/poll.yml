@@ -27,17 +27,6 @@ jobs:
           key: state-seen-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             state-seen-${{ runner.os }}-
-      
-      - name: Debug Suno state
-        run: |
-          python3 -c "
-          import json
-          data = json.load(open('state_seen.json'))
-          suno = [k for k in data['seen'] if 'suno' in k]
-          print(f'{len(suno)} suno entries')
-          for k in suno:
-              print(k)
-          "
 
       - name: Setup Python
         uses: actions/setup-python@v5
