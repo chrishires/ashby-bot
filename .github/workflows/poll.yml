@@ -34,7 +34,7 @@ jobs:
           import json
           with open('state_seen.json') as f:
               data = json.load(f)
-          data['seen'] = [k for k in data['seen'] if 'https://jobs.ashbyhq.com/suno/4bf71557-1cb1-4722-88ec-e401adc0b75a' not in k]
+          data['seen'] = [k for k in data['seen'] if 'url:https://jobs.ashbyhq.com/suno/4bf71557-1cb1-4722-88ec-e401adc0b75a' not in k]
           with open('state_seen.json', 'w') as f:
               json.dump({'seen': sorted(data['seen'])}, f, indent=2)
           "
