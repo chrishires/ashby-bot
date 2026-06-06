@@ -6,11 +6,12 @@ from dataclasses import dataclass
 from email.message import EmailMessage
 from pathlib import Path
 from typing import Dict, List, Set, Tuple
-
 import requests
+from datetime import datetime, timezone, timedelta
 
 BOARDS_FILE = Path("boards.txt")
 STATE_FILE = Path("state_seen.json")
+REPOST_WINDOW_DAYS = 3
 
 ASHBY_URL = "https://api.ashbyhq.com/posting-api/job-board/{slug}"
 
@@ -166,6 +167,16 @@ def extract_job_url(job: dict) -> str:
 def extract_updated_at(job: dict) -> str:
     return job.get("updatedAt") or job.get("publishedAt") or job.get("createdAt") or ""
 
+def is_recently_updated(job: dict) -> bool:
+    updated = extract_updated_at(job)
+    if not updated:
+        return False
+    try:
+        dt = datetime.fromisoformat(updated.replace("Z", "+00:00"))
+        return datetime.now(timezone.utc) - dt < timedelta(days=REPOST_WINDOW_DAYS)
+    except ValueError:
+        return False
+
 
 def find_new_hits(boards: List[str], seen: Set[str]) -> Tuple[List[JobHit], Set[str]]:
     hits: List[JobHit] = []
@@ -198,7 +209,8 @@ def find_new_hits(boards: List[str], seen: Set[str]) -> Tuple[List[JobHit], Set[
             key_id = f"id:{jid}" if jid else None
 
             # ---- global dedupe ----
-            if key_url in new_seen or (key_id and key_id in new_seen):
+            already_seen = key_url in new_seen or (key_id and key_id in new_seen)
+            if already_seen and not is_recently_updated(job):
                 continue
 
             # mark as seen immediately (even if it doesn't match DS)
