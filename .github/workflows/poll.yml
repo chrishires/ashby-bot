@@ -30,14 +30,18 @@ jobs:
 
       - name: Remove test job from state
         run: |
-          python3 -c "
+          python3 - <<'PYEOF'
           import json
+          target = 'url:https://jobs.ashbyhq.com/suno/4bf71557-1cb1-4722-88ec-e401adc0b75a'
           with open('state_seen.json') as f:
               data = json.load(f)
-          data['seen'] = [k for k in data['seen'] if 'url:https://jobs.ashbyhq.com/suno/4bf71557-1cb1-4722-88ec-e401adc0b75a' not in k]
+          before = len(data['seen'])
+          data['seen'] = [k for k in data['seen'] if k != target]
+          after = len(data['seen'])
+          print(f"Removed {before - after} entries")
           with open('state_seen.json', 'w') as f:
               json.dump({'seen': sorted(data['seen'])}, f, indent=2)
-          "
+          PYEOF
 
       - name: Setup Python
         uses: actions/setup-python@v5
