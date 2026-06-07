@@ -11,7 +11,7 @@ from datetime import datetime, timezone, timedelta
 
 BOARDS_FILE = Path("boards.txt")
 STATE_FILE = Path("state_seen.json")
-REPOST_WINDOW_DAYS = 3
+REPOST_WINDOW_HOURS = 3
 
 ASHBY_URL = "https://api.ashbyhq.com/posting-api/job-board/{slug}"
 
@@ -173,7 +173,7 @@ def is_recently_updated(job: dict) -> bool:
         return False
     try:
         dt = datetime.fromisoformat(updated.replace("Z", "+00:00"))
-        return datetime.now(timezone.utc) - dt < timedelta(days=REPOST_WINDOW_DAYS)
+        return datetime.now(timezone.utc) - dt < timedelta(hours=REPOST_WINDOW_HOURS)
     except ValueError:
         return False
 
